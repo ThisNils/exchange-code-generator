@@ -21,7 +21,7 @@ const wait = (time) => new Promise((res) => setTimeout(res, time));
   const browserFetcher = puppeteer.createBrowserFetcher({
     path: process.cwd(),
   });
-  console.log(await browserFetcher.canDownload() ? 'Installing Chrome. This may take a while!' : 'Chrome is already installed');
+  console.log(await browserFetcher.canDownload('666595') ? 'Installing Chrome. This may take a while!' : 'Chrome is already installed');
   const browserInfo = await browserFetcher.download('666595');
   const email = await consoleQuestion('Please enter your email: ');
   const password = await consoleQuestion('Please enter your password: ');
