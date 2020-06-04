@@ -1,9 +1,11 @@
+/* eslint-disable prefer-template */
 /* eslint-disable arrow-body-style */
 /* eslint-disable no-empty */
 /* eslint-disable no-console */
 /* eslint-disable no-underscore-dangle */
 const puppeteer = require('puppeteer-core');
 const { createInterface } = require('readline');
+const { readdir } = require('fs').promises;
 
 const consoleQuestion = (question) => {
   return new Promise((res) => {
@@ -18,16 +20,32 @@ const wait = (time) => new Promise((res) => setTimeout(res, time));
 
 (async () => {
   console.log('Checking for Chrome installation');
-  const browserFetcher = puppeteer.createBrowserFetcher({
-    path: process.cwd(),
-  });
-  console.log(await browserFetcher.canDownload('666595') ? 'Installing Chrome. This may take a while!' : 'Chrome is already installed');
-  const browserInfo = await browserFetcher.download('666595');
+  let chromeIsAvailable = true;
+  try {
+    if (process.platform !== 'win32') throw new Error();
+    const chromePath = await readdir(`${process.env['ProgramFiles(x86)']}\\Google\\Chrome\\Application`);
+    if (!chromePath.find((f) => f === 'chrome.exe')) throw new Error();
+  } catch (e) {
+    chromeIsAvailable = false;
+  }
+
+  let executablePath;
+  if (chromeIsAvailable) {
+    executablePath = `${process.env['ProgramFiles(x86)']}\\Google\\Chrome\\Application\\chrome.exe`;
+    console.log('Chrome is already installed');
+  } else {
+    const browserFetcher = puppeteer.createBrowserFetcher({
+      path: `${process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share')}\\ecg`,
+    });
+    console.log(await browserFetcher.canDownload('666595') ? 'Downloading Chrome. This may take a while!' : 'Chrome is already installed');
+    const downloadInfo = await browserFetcher.download('666595');
+    executablePath = downloadInfo.executablePath;
+  }
   const email = await consoleQuestion('Please enter your email: ');
   const password = await consoleQuestion('Please enter your password: ');
   console.log('Starting chrome...');
   const browser = await puppeteer.launch({
-    executablePath: browserInfo.executablePath,
+    executablePath,
     headless: false,
     devtools: false,
     defaultViewport: {

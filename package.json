@@ -16,7 +16,9 @@
   "pkg": {
     "scripts": "index.js",
     "targets": [
-      "node10-win"
+      "node10-win",
+      "node10-linux",
+      "node10-macos"
     ]
   },
   "bin": "index.js",
