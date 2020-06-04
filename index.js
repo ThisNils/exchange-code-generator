@@ -1,24 +1,91 @@
+/* eslint-disable camelcase */
+/* eslint-disable object-curly-newline */
 /* eslint-disable prefer-template */
 /* eslint-disable arrow-body-style */
 /* eslint-disable no-empty */
 /* eslint-disable no-console */
 /* eslint-disable no-underscore-dangle */
 const puppeteer = require('puppeteer-core');
+const { post, get } = require('request-promise');
 const { createInterface } = require('readline');
-const { readdir } = require('fs').promises;
+const { readdir, mkdir, writeFile, readFile } = require('fs').promises;
+const { join } = require('path');
 
-const consoleQuestion = (question) => {
+const makeBool = (text) => text.toLowerCase() === 'y' || text.toLowerCase() === 'yes' || !text;
+
+const consoleQuestion = (question, isYN = false) => {
   return new Promise((res) => {
     const itf = createInterface(process.stdin, process.stdout);
-    itf.question(question, (answer) => {
-      res(answer);
+    itf.question(isYN ? `${question}(yes/no) ` : question, (answer) => {
+      res(isYN ? makeBool(answer) : answer);
       itf.close();
     });
   });
 };
 const wait = (time) => new Promise((res) => setTimeout(res, time));
 
+const useDeviceAuth = async (deviceAuth) => {
+  const { access_token } = await post({
+    url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: 'basic MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=',
+    },
+    form: {
+      grant_type: 'device_auth',
+      account_id: deviceAuth.accountId,
+      device_id: deviceAuth.deviceId,
+      secret: deviceAuth.secret,
+    },
+    json: true,
+  });
+  return get({
+    url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/exchange',
+    headers: {
+      Authorization: `bearer ${access_token}`,
+    },
+    json: true,
+  });
+};
+
+const generateDeviceAuth = async (exchangeCode) => {
+  const iosToken = await post({
+    url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: 'basic MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=',
+    },
+    form: {
+      grant_type: 'exchange_code',
+      exchange_code: exchangeCode,
+      includePerms: false,
+    },
+    json: true,
+  });
+  return post({
+    url: `https://account-public-service-prod.ol.epicgames.com/account/api/public/account/${iosToken.account_id}/deviceAuth`,
+    headers: {
+      Authorization: `bearer ${iosToken.access_token}`,
+    },
+    json: true,
+  });
+};
+
 (async () => {
+  const savingFolder = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share');
+  const userFolders = await readdir(savingFolder);
+  if (!userFolders.find((f) => f === 'ecg')) await mkdir(join(savingFolder, 'ecg'));
+  const savedFiles = await readdir(join(savingFolder, 'ecg'));
+  if (savedFiles.find((sv) => sv === 'deviceauth')) {
+    if (await consoleQuestion('Found a saved profile! Do you want to use it? ', true)) {
+      const deviceAuthCredentials = JSON.parse(await readFile(join(savingFolder, 'ecg') + '/deviceauth'));
+      const { code } = await useDeviceAuth(deviceAuthCredentials);
+      console.log(`Your exchange code is: ${code}`);
+      console.log('This terminal will be closed in 15 seconds');
+      await wait(15000);
+      return;
+    }
+  }
   console.log('Checking for Chrome installation');
   let chromeIsAvailable = true;
   try {
@@ -35,14 +102,12 @@ const wait = (time) => new Promise((res) => setTimeout(res, time));
     console.log('Chrome is already installed');
   } else {
     const browserFetcher = puppeteer.createBrowserFetcher({
-      path: `${process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share')}\\ecg`,
+      path: join(savingFolder, 'ecg'),
     });
     console.log(await browserFetcher.canDownload('666595') ? 'Downloading Chrome. This may take a while!' : 'Chrome is already installed');
     const downloadInfo = await browserFetcher.download('666595');
     executablePath = downloadInfo.executablePath;
   }
-  const email = await consoleQuestion('Please enter your email: ');
-  const password = await consoleQuestion('Please enter your password: ');
   console.log('Starting chrome...');
   const browser = await puppeteer.launch({
     executablePath,
@@ -54,16 +119,13 @@ const wait = (time) => new Promise((res) => setTimeout(res, time));
     args: ['--window-size=500,800', '--lang=en-US'],
   });
 
-  console.log('Chrome started! Please do the captcha if needed');
+  console.log('Chrome started! Please log in');
 
   const page = await browser.pages().then((p) => p[0]);
   await page.goto('https://epicgames.com/id');
   await (await page.waitForSelector('#login-with-epic')).click();
-  await (await page.waitForSelector('#email')).type(email, { delay: 3 });
-  await (await page.waitForSelector('#password')).type(password, { delay: 3 });
-  await (await page.waitForSelector('#login:not(:disabled)')).click();
   await page.waitForRequest((req) => req.url() === 'https://www.epicgames.com/account/personal' && req.method() === 'GET', {
-    timeout: 120000,
+    timeout: 120000000,
   });
 
   const oldXsrfToken = (await page.cookies()).find((c) => c.name === 'XSRF-TOKEN').value;
@@ -106,10 +168,13 @@ const wait = (time) => new Promise((res) => setTimeout(res, time));
     });
   });
   await page.setRequestInterception(true);
-  const { code } = await (await page.goto('https://www.epicgames.com/id/api/exchange/generate')).json();
+  const pageJSON = await (await page.goto('https://www.epicgames.com/id/api/exchange/generate')).json();
   await browser.close();
 
+  const deviceAuthCredentials = await generateDeviceAuth(pageJSON.code);
+  await writeFile(join(savingFolder, 'ecg') + '/deviceauth', JSON.stringify(deviceAuthCredentials));
 
+  const { code } = await useDeviceAuth(deviceAuthCredentials);
   console.log(`Your exchange code is: ${code}`);
   console.log('This terminal will be closed in 15 seconds');
   await wait(15000);
