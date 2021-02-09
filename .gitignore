@@ -102,3 +102,8 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Binaries
+get-exchange-code-win.exe
+get-exchange-code-linux
+get-exchange-code-macos

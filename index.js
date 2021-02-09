@@ -4,8 +4,8 @@ const {
   readdir, mkdir, writeFile, readFile,
 } = require('fs').promises;
 const { join } = require('path');
-const { write } = require('clipboardy');
 const open = require('open');
+const { exec } = require('child_process');
 
 const makeBool = (text) => text.toLowerCase() === 'y' || text.toLowerCase() === 'yes' || !text;
 
@@ -21,6 +21,15 @@ const makeForm = (keyValuePairs) => {
   const data = new URLSearchParams();
   Object.keys(keyValuePairs).forEach((key) => data.append(key, keyValuePairs[key]));
   return data.toString();
+};
+
+const copyToClipboard = (text) => {
+  switch (process.platform) {
+    case 'darwin': exec(`echo '${text}' | pbcopy`); break;
+    case 'linux': exec(`echo ${text} | xclip -sel c`); break;
+    case 'win32': exec(`echo | set /p ecgvar="${text}" | clip`); break;
+    default: console.log('your OS is not supported');
+  }
 };
 
 const useDeviceAuth = async (deviceAuth) => {
@@ -161,10 +170,10 @@ const useDeviceCode = (deviceCode) => new Promise((res) => {
     process.stdout.cursorTo(0);
     process.stdout.write('\r\x1b[K');
     if (key.name.toLowerCase() === 'e') {
-      write(exchangeCode);
+      copyToClipboard(exchangeCode);
       console.log('exchange code copied to clipboard');
     } else if (key.name.toLowerCase() === 'a') {
-      write(JSON.stringify(deviceAuth, null, 2));
+      copyToClipboard(JSON.stringify(deviceAuth));
       console.log('device auth copied to clipboard');
     }
   });
