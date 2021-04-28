@@ -10,7 +10,7 @@
   "author": "ThisNils",
   "license": "MIT",
   "dependencies": {
-    "axios": "^4.2.5",
+    "axios": "^0.21.1",
     "open": "^7.4.0"
   },
   "pkg": {

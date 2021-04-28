@@ -56,7 +56,7 @@ const useDeviceAuth = async (deviceAuth) => {
 };
 
 const generateDeviceAuth = async (exchangeCode) => {
-  const { data: { access_token: accessToken, account_id: accountId } } = await axios({
+  const { data: { access_token: accessToken, account_id: accountId, displayName } } = await axios({
     method: 'POST',
     url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
     headers: {
@@ -77,7 +77,9 @@ const generateDeviceAuth = async (exchangeCode) => {
       Authorization: `bearer ${accessToken}`,
     },
   });
-  return { accountId, deviceId, secret };
+  return {
+    accountId, deviceId, secret, displayName,
+  };
 };
 
 const getDeviceCode = async () => {
@@ -86,7 +88,7 @@ const getDeviceCode = async () => {
     url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: 'basic NTIyOWRjZDNhYzM4NDUyMDhiNDk2NjQ5MDkyZjI1MWI6ZTNiZDJkM2UtYmY4Yy00ODU3LTllN2QtZjNkOTQ3ZDIyMGM3=',
+      Authorization: 'basic YjA3MGYyMDcyOWY4NDY5M2I1ZDYyMWM5MDRmYzViYzI6SEdAWEUmVEdDeEVKc2dUIyZfcDJdPWFSbyN+Pj0+K2M2UGhSKXpYUA==',
     },
     data: makeForm({
       grant_type: 'client_credentials',
@@ -144,12 +146,12 @@ const useDeviceCode = (deviceCode) => new Promise((res) => {
   const savingFolder = process.env.APPDATA || (process.platform === 'darwin' ? `${process.env.HOME}/Library/Preferences` : `${process.env.HOME}/.local/share`);
   const userFolders = await readdir(savingFolder);
   if (!userFolders.find((f) => f === 'ecg')) await mkdir(join(savingFolder, 'ecg'));
-  const savedFiles = await readdir(join(savingFolder, 'ecg'));
 
   let deviceAuth;
-  if (savedFiles.find((sv) => sv === 'deviceauth') && await consoleQuestion('Found a saved profile! Do you want to use it? ', true)) {
+  try {
     deviceAuth = JSON.parse(await readFile(join(savingFolder, 'ecg', 'deviceauth')));
-  } else {
+  } catch (e) { /* ignore */ }
+  if (!deviceAuth || !await consoleQuestion(`Found a saved profile${deviceAuth.displayName ? ` (${deviceAuth.displayName})` : ''}! Do you want to use it? `, true)) {
     console.log('Setting up login window');
     const { url, deviceCode } = await getDeviceCode();
     await open(url);
@@ -171,10 +173,10 @@ const useDeviceCode = (deviceCode) => new Promise((res) => {
     process.stdout.write('\r\x1b[K');
     if (key.name.toLowerCase() === 'e') {
       copyToClipboard(exchangeCode);
-      console.log('exchange code copied to clipboard');
+      console.log('The exchange code was copied to your clipboard');
     } else if (key.name.toLowerCase() === 'a') {
       copyToClipboard(JSON.stringify(deviceAuth));
-      console.log('device auth copied to clipboard');
+      console.log('The device auth was copied to your clipboard');
     }
   });
   await new Promise((res) => setTimeout(res, 30000));
