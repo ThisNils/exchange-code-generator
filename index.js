@@ -1,11 +1,17 @@
+/* eslint-disable no-console */
 const axios = require('axios').default;
 const { createInterface, emitKeypressEvents } = require('readline');
 const {
   readdir, mkdir, writeFile, readFile,
 } = require('fs').promises;
 const { join } = require('path');
-const open = require('open');
+const puppeteer = require('puppeteer-extra');
+const stealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { exec } = require('child_process');
+
+puppeteer.use(stealthPlugin());
+
+delete axios.defaults.headers.post['Content-Type'];
 
 const makeBool = (text) => text.toLowerCase() === 'y' || text.toLowerCase() === 'yes' || !text;
 
@@ -66,7 +72,7 @@ const generateDeviceAuth = async (exchangeCode) => {
     data: makeForm({
       grant_type: 'exchange_code',
       exchange_code: exchangeCode,
-      includePerms: false,
+      token_type: 'eg1',
     }),
   });
 
@@ -82,67 +88,91 @@ const generateDeviceAuth = async (exchangeCode) => {
   };
 };
 
-const getDeviceCode = async () => {
-  const { data: { access_token: switchAccessToken } } = await axios({
-    method: 'POST',
-    url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: 'basic YjA3MGYyMDcyOWY4NDY5M2I1ZDYyMWM5MDRmYzViYzI6SEdAWEUmVEdDeEVKc2dUIyZfcDJdPWFSbyN+Pj0+K2M2UGhSKXpYUA==',
+const getExchangeCode = async (savingFolder) => {
+  console.log('Checking for Chrome installation');
+  let chromeIsAvailable = true;
+  try {
+    if (process.platform !== 'win32') throw new Error();
+    const chromePath = await readdir(`${process.env['ProgramFiles(x86)']}\\Google\\Chrome\\Application`);
+    if (!chromePath.find((f) => f === 'chrome.exe')) throw new Error();
+  } catch (e) {
+    chromeIsAvailable = false;
+  }
+
+  let executablePath;
+  if (chromeIsAvailable) {
+    executablePath = `${process.env['ProgramFiles(x86)']}\\Google\\Chrome\\Application\\chrome.exe`;
+    console.log('Chrome is already installed');
+  } else {
+    const browserFetcher = puppeteer.createBrowserFetcher({
+      path: join(savingFolder, 'ecg'),
+    });
+    console.log(await browserFetcher.canDownload('666595') ? 'Downloading Chrome. This may take a while!' : 'Chrome is already installed');
+    const downloadInfo = await browserFetcher.download('666595');
+    executablePath = downloadInfo.executablePath;
+  }
+  console.log('Starting chrome...');
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: false,
+    devtools: false,
+    defaultViewport: {
+      width: 500, height: 800,
     },
-    data: makeForm({
-      grant_type: 'client_credentials',
-    }),
+    args: ['--window-size=500,800', '--lang=en-US'],
   });
-  const { data: { verification_uri_complete: url, device_code: deviceCode } } = await axios({
-    method: 'POST',
-    url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/deviceAuthorization',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `bearer ${switchAccessToken}`,
-    },
-    data: makeForm({
-      prompt: 'login',
-    }),
+
+  console.log('Chrome started! Please log in');
+
+  const page = await browser.pages().then((p) => p[0]);
+  await page.goto('https://epicgames.com/id');
+  await (await page.waitForSelector('#login-with-epic')).click();
+  await page.waitForRequest((req) => req.url() === 'https://www.epicgames.com/account/personal' && req.method() === 'GET', {
+    timeout: 120000000,
   });
-  return { url, deviceCode };
+
+  const oldXSRF = (await page.cookies()).find((c) => c.name === 'XSRF-TOKEN').value;
+  let newXSRF;
+
+  page.on('request', (req) => {
+    if (['https://www.epicgames.com/id/api/authenticate', 'https://www.epicgames.com/id/api/csrf'].includes(req.url())) {
+      req.continue({
+        method: 'GET',
+        headers: {
+          ...req.headers,
+          'X-XSRF-TOKEN': oldXSRF,
+        },
+      });
+    } else if (req.url() === 'https://www.epicgames.com/id/api/exchange/generate') {
+      req.continue({
+        method: 'POST',
+        headers: {
+          ...req.headers,
+          'X-XSRF-TOKEN': newXSRF,
+        },
+      });
+    } else {
+      req.continue();
+    }
+  });
+
+  await page.setRequestInterception(true);
+
+  await page.goto('https://www.epicgames.com/id/api/authenticate');
+
+  try {
+    await page.goto('https://www.epicgames.com/id/api/csrf');
+  } catch (e) { /* ignore */ }
+
+  newXSRF = (await page.cookies()).find((c) => c.name === 'XSRF-TOKEN').value;
+
+  const pageJSON = await (await page.goto('https://www.epicgames.com/id/api/exchange/generate')).json();
+  await browser.close();
+
+  return pageJSON.code;
 };
 
-const useDeviceCode = (deviceCode) => new Promise((res) => {
-  let retries = 0;
-  const requestInterval = setInterval(async () => {
-    try {
-      const { data: { access_token: accessToken } } = await axios({
-        method: 'POST',
-        url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: 'basic NTIyOWRjZDNhYzM4NDUyMDhiNDk2NjQ5MDkyZjI1MWI6ZTNiZDJkM2UtYmY4Yy00ODU3LTllN2QtZjNkOTQ3ZDIyMGM3=',
-        },
-        data: makeForm({
-          grant_type: 'device_code',
-          device_code: deviceCode,
-        }),
-      });
-      clearInterval(requestInterval);
-      const { data: { code: exchangeCode } } = await axios({
-        url: 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/exchange',
-        headers: {
-          Authorization: `bearer ${accessToken}`,
-        },
-      });
-      res(exchangeCode);
-    } catch (err) {
-      if (retries >= 24) {
-        clearInterval(requestInterval);
-        res();
-      } else retries += 1;
-    }
-  }, 10000);
-});
-
 (async () => {
-  delete axios.defaults.headers.post['Content-Type'];
   const savingFolder = process.env.APPDATA || (process.platform === 'darwin' ? `${process.env.HOME}/Library/Preferences` : `${process.env.HOME}/.local/share`);
   const userFolders = await readdir(savingFolder);
   if (!userFolders.find((f) => f === 'ecg')) await mkdir(join(savingFolder, 'ecg'));
@@ -152,19 +182,19 @@ const useDeviceCode = (deviceCode) => new Promise((res) => {
     deviceAuth = JSON.parse(await readFile(join(savingFolder, 'ecg', 'deviceauth')));
   } catch (e) { /* ignore */ }
   if (!deviceAuth || !await consoleQuestion(`Found a saved profile${deviceAuth.displayName ? ` (${deviceAuth.displayName})` : ''}! Do you want to use it? `, true)) {
-    console.log('Setting up login window');
-    const { url, deviceCode } = await getDeviceCode();
-    await open(url);
-    console.log('Please log into your account');
-    const exchangeCode = await useDeviceCode(deviceCode);
+    const exchangeCode = await getExchangeCode(savingFolder);
+
     console.log('Saving login credentials');
     deviceAuth = await generateDeviceAuth(exchangeCode);
     await writeFile(join(savingFolder, 'ecg', 'deviceauth'), JSON.stringify(deviceAuth));
   }
+
+  delete deviceAuth.displayName;
+
   console.log('Generating exchange code');
   const { code: exchangeCode } = await useDeviceAuth(deviceAuth);
-  console.log(`\nYour exchange code is: ${exchangeCode}\nYour device auth is ${JSON.stringify(deviceAuth)}\n`);
-  console.log('Press E to copy the exchange code to your clipboard\nPress A to copy the device auth to your clipboard\nThis window will auto close in 30 secs');
+  console.log(`\nYour exchange code is: ${exchangeCode}\nYour device auth is: ${JSON.stringify(deviceAuth)}\n`);
+  console.log('Press E to copy the exchange code to your clipboard\nPress A to copy the device auth to your clipboard\n');
   const itf = createInterface(process.stdin, process.stdout);
   emitKeypressEvents(process.stdin, itf);
   process.stdin.setRawMode(true);
@@ -173,12 +203,12 @@ const useDeviceCode = (deviceCode) => new Promise((res) => {
     process.stdout.write('\r\x1b[K');
     if (key.name.toLowerCase() === 'e') {
       copyToClipboard(exchangeCode);
-      console.log('The exchange code was copied to your clipboard');
+      process.stdout.write('The exchange code was copied to your clipboard');
     } else if (key.name.toLowerCase() === 'a') {
       copyToClipboard(JSON.stringify(deviceAuth));
-      console.log('The device auth was copied to your clipboard');
+      process.stdout.write('The device auth was copied to your clipboard');
     }
   });
-  await new Promise((res) => setTimeout(res, 30000));
-  itf.close();
+
+  process.stdin.resume();
 })();
