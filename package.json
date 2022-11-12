@@ -12,7 +12,7 @@
   "dependencies": {
     "axios": "^0.21.1",
     "open": "^7.4.0",
-    "puppeteer-core": "^10.4.0",
+    "puppeteer-core": "^19.2.2",
     "puppeteer-extra": "^3.2.3",
     "puppeteer-extra-plugin-stealth": "^2.9.0"
   },
